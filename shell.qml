@@ -13,6 +13,7 @@ import qs.notifications     // for NotificationService + NotificationCard
 import qs.osd               // for Osd panel + OsdService singleton
 import qs.clipboard         // for ClipboardPopup + ClipboardService singleton
 import qs.launcher          // for Launcher + LauncherService singleton
+import qs.notes             // for NotesPopup + NotesService singleton
 import qs.lock              // for Lock + LockService singleton
 import qs.wallpaper         // for WallpaperLayer + WallpaperPickerPopup + WallpaperService
 import qs.weather           // for WeatherDetailPopup + WeatherService singleton
@@ -89,7 +90,7 @@ ShellRoot {
     Variants {
         model: Quickshell.screens
 
-        WallpaperLayer { }
+//         WallpaperLayer { }
     }
 
     // Bar — one per monitor.
@@ -214,6 +215,16 @@ ShellRoot {
         }
     }
 
+    // Quick notes — same per-monitor pattern as the clipboard picker.
+    // Triggered via the IPC handler below (called from a compositor keybind).
+    Variants {
+        model: Quickshell.screens
+
+        NotesPopup {
+            focusedOutput: Compositor.focusedOutput
+        }
+    }
+
     // Wallpaper picker — same per-monitor pattern as Launcher / Clipboard.
     // Triggered by clicking the Wallpaper bar widget (no IPC keybind, per
     // the user's preference; the widget toggles WallpaperService.popupOpen
@@ -284,6 +295,14 @@ ShellRoot {
         function toggle(): void               { LauncherService.togglePopup(); }
         function openEmoji(): void            { LauncherService.openPopupWithQuery(";"); }
         function openWith(prefix: string): void { LauncherService.openPopupWithQuery(prefix); }
+    }
+
+    // IPC: `qs ipc call notes open` toggles the quick-notes popup.
+    IpcHandler {
+        target: "notes"
+        function open(): void   { NotesService.openPopup(); }
+        function close(): void  { NotesService.closePopup(); }
+        function toggle(): void { NotesService.togglePopup(); }
     }
 
     // IPC: `qs ipc call lock open` locks the session. Idempotent (calling

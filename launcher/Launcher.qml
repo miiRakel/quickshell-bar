@@ -14,6 +14,9 @@ import qs
 
 PanelWindow {
     id: panel
+    WlrLayershell.namespace: "quickshell-popup"
+
+    // Backdrop blur behind the card (Hyprland ext-background-effect-v1).
 
     required property var modelData
     required property string focusedOutput
@@ -73,9 +76,20 @@ PanelWindow {
     }
 
     Rectangle {
+        id: bgCard
         anchors.fill: parent
         anchors.margins: 12
-        color: Theme.bg
+        // Bumped from 0.35 (same as Clipboard/Calendar) for the same reason
+        // as the notes popup: near-black Theme.bg at 0.35 alpha is nearly
+        // invisible over a dark desktop, most noticeable in the empty
+        // space around a hovered (opaque) row — looked like the card was
+        // "see-through" while hovering between apps.
+        // 0.6 still read as "see-through" over an already-dark window behind
+        // it (e.g. a dark-mode webpage) — Theme.bg and that background are
+        // close enough in tone that blending barely changes anything. 0.85
+        // (matching the same fix in Thunar's dropdown menus) stays solid
+        // regardless of what's behind, at a small cost to the glassy look.
+        color: Qt.alpha(Theme.bg, 0.85)
         border.color: Theme.border
         border.width: 1
         radius: Theme.radius
@@ -94,7 +108,7 @@ PanelWindow {
         layer.enabled: true
         layer.effect: MultiEffect {
             shadowEnabled: true
-            shadowColor: Qt.rgba(0, 0, 0, 0.5)
+            shadowColor: Qt.rgba(0, 0, 0, 0.25)
             shadowVerticalOffset: 4
             shadowHorizontalOffset: 0
             shadowBlur: 0.6

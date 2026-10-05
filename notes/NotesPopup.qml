@@ -10,6 +10,8 @@ import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Widgets
 import qs
+import qs.alarms
+import qs.pomodoro
 
 PanelWindow {
     id: panel
@@ -42,8 +44,12 @@ PanelWindow {
 
     // No anchors → wlroots horizontally and vertically centers a
     // free-floating layer surface. Surface is +24 px in each axis so the
-    // drop shadow has padding to render in.
-    implicitWidth: 420 + 24
+    // drop shadow has padding to render in. The extra +36 on the width is
+    // a side rail to the right of the card itself, for the alarm-clock
+    // launcher button — living outside the card instead of overlapping its
+    // content.
+    readonly property int cardWidth: 420
+    implicitWidth: cardWidth + 24 + 36
     implicitHeight: 440 + 24
 
     // Refocus the input whenever the popup opens. The draft text is left
@@ -57,12 +63,28 @@ PanelWindow {
         }
     }
 
+    // Non-empty while editing an existing note — Enter then updates that
+    // note in place instead of creating a new one.
+    property string editingId: ""
+
+    function startEdit(id, text) {
+        panel.editingId = id;
+        noteInput.text = text;
+        noteInput.cursorPosition = text.length;
+        noteInput.forceActiveFocus();
+    }
+
     // Backdrop blur behind the card (Hyprland ext-background-effect-v1).
 
     Rectangle {
         id: bgCard
-        anchors.fill: parent
-        anchors.margins: 12
+        anchors {
+            left: parent.left
+            top: parent.top
+            bottom: parent.bottom
+            margins: 12
+        }
+        width: panel.cardWidth
         // Higher alpha than Clipboard's identical card (0.35): notes are
         // usually short, leaving a lot of empty card area, and at 0.35 the
         // near-black Theme.bg tint is nearly invisible over a dark desktop —
@@ -111,38 +133,62 @@ PanelWindow {
                 border.width: 1
                 Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
 
-                TextEdit {
-                    id: noteInput
+                Flickable {
+                    id: inputFlick
                     anchors {
                         fill: parent
                         margins: 10
                     }
-                    wrapMode: TextEdit.Wrap
                     clip: true
-                    color: Theme.text
-                    font.family: Theme.fontMono
-                    font.pixelSize: Theme.fontSizeNormal
-                    selectByMouse: true
+                    contentWidth: width
+                    contentHeight: Math.max(height, noteInput.implicitHeight)
+                    boundsBehavior: Flickable.StopAtBounds
 
-                    Keys.onPressed: event => {
-                        if (event.key === Qt.Key_Escape) {
-                            NotesService.closePopup();
-                            event.accepted = true;
-                        } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
-                                && !(event.modifiers & Qt.ShiftModifier)) {
-                            NotesService.addNote(noteInput.text);
-                            noteInput.text = "";
-                            event.accepted = true;
+                    TextEdit {
+                        id: noteInput
+                        width: inputFlick.width
+                        wrapMode: TextEdit.Wrap
+                        color: Theme.text
+                        font.family: Theme.fontMono
+                        font.pixelSize: Theme.fontSizeNormal
+                        selectByMouse: true
+
+                        // TextEdit never scrolls itself — without this, typing
+                        // past the visible height just clips the cursor out of
+                        // view instead of following it.
+                        onCursorRectangleChanged: {
+                            if (cursorRectangle.y < inputFlick.contentY)
+                                inputFlick.contentY = cursorRectangle.y;
+                            else if (cursorRectangle.y + cursorRectangle.height > inputFlick.contentY + inputFlick.height)
+                                inputFlick.contentY = cursorRectangle.y + cursorRectangle.height - inputFlick.height;
                         }
-                        // Shift+Enter falls through to TextEdit's own newline.
-                    }
 
-                    Text {
-                        anchors.fill: parent
-                        visible: !noteInput.text && !noteInput.activeFocus
-                        text: "Quick note… Enter to save, Shift+Enter for a new line"
-                        color: Theme.textMuted
-                        font: noteInput.font
+                        Keys.onPressed: event => {
+                            if (event.key === Qt.Key_Escape) {
+                                NotesService.closePopup();
+                                event.accepted = true;
+                            } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                    && !(event.modifiers & Qt.ShiftModifier)) {
+                                if (panel.editingId) {
+                                    NotesService.updateNote(panel.editingId, noteInput.text);
+                                    panel.editingId = "";
+                                } else {
+                                    NotesService.addNote(noteInput.text);
+                                }
+                                noteInput.text = "";
+                                inputFlick.contentY = 0;
+                                event.accepted = true;
+                            }
+                            // Shift+Enter falls through to TextEdit's own newline.
+                        }
+
+                        Text {
+                            anchors.fill: parent
+                            visible: !noteInput.text && !noteInput.activeFocus
+                            text: "Quick note… Enter to save, Shift+Enter for a new line"
+                            color: Theme.textMuted
+                            font: noteInput.font
+                        }
                     }
                 }
             }
@@ -151,7 +197,7 @@ PanelWindow {
             ListView {
                 id: listView
                 width: parent.width
-                height: parent.height - inputBox.height - footer.height - parent.spacing * 2
+                height: parent.height - inputBox.height - parent.spacing
                 clip: true
                 spacing: 4
                 model: ScriptModel {
@@ -171,7 +217,10 @@ PanelWindow {
                     width: ListView.view.width
                     height: bodyCol.implicitHeight + 16
                     radius: Theme.radiusSmall
-                    color: rowMa.containsMouse ? Theme.surface : "transparent"
+                    readonly property bool isEditing: panel.editingId === row.modelData.id
+                    color: isEditing
+                        ? Theme.surfaceHi
+                        : (rowMa.containsMouse ? Theme.surface : "transparent")
                     Behavior on color { ColorAnimation { duration: Theme.animFast } }
 
                     Column {
@@ -192,7 +241,7 @@ PanelWindow {
 
                             Text {
                                 id: bodyText
-                                width: parent.width - copyBtn.width - delBtn.width - parent.spacing * 2
+                                width: parent.width - editBtn.width - copyBtn.width - delBtn.width - parent.spacing * 3
                                 text: row.modelData.text
                                 wrapMode: Text.Wrap
                                 maximumLineCount: row.expanded ? 0 : 4
@@ -200,6 +249,43 @@ PanelWindow {
                                 color: Theme.text
                                 font.family: Theme.fontMono
                                 font.pixelSize: Theme.fontSizeNormal
+                            }
+
+                            // Hover-revealed edit button — loads the note
+                            // back into the input box; Enter saves over it.
+                            Rectangle {
+                                id: editBtn
+                                anchors.top: parent.top
+                                width: 24
+                                height: 24
+                                radius: Theme.radiusSmall
+                                color: editMa.containsMouse ? Theme.bg : "transparent"
+                                border.color: Theme.border
+                                border.width: editMa.containsMouse ? 1 : 0
+                                opacity: editMa.containsMouse
+                                    ? 1.0
+                                    : (rowMa.containsMouse ? 0.6 : 0.0)
+                                Behavior on opacity { NumberAnimation { duration: Theme.animFast } }
+                                Behavior on color { ColorAnimation { duration: Theme.animFast } }
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    // Font Awesome 7 Solid:  pen-to-square
+                                    text: ""
+                                    color: Theme.text
+                                    font.family: Theme.fontIcon
+                                    font.styleName: "Solid"
+                                    font.pixelSize: 11
+                                    renderType: Text.NativeRendering
+                                }
+
+                                MouseArea {
+                                    id: editMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: panel.startEdit(row.modelData.id, row.modelData.text)
+                                }
                             }
 
                             // Hover-revealed copy button — copies the full
@@ -298,7 +384,13 @@ PanelWindow {
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: NotesService.removeNote(row.modelData.id)
+                                    onClicked: {
+                                        if (row.isEditing) {
+                                            panel.editingId = "";
+                                            noteInput.text = "";
+                                        }
+                                        NotesService.removeNote(row.modelData.id);
+                                    }
                                 }
                             }
                         }
@@ -339,17 +431,88 @@ PanelWindow {
                     }
                 }
             }
+        }
+    }
 
-            // ---- Footer hint ----
-            Text {
-                id: footer
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                text: "Esc to close · Enter to save · click a note to expand · copy/trash on hover"
-                color: Theme.textMuted
-                font.family: Theme.fontMono
-                font.pixelSize: Theme.fontSizeSmall
-            }
+    // Opens the Alarms popup. Lives in the rail OUTSIDE the card (not
+    // overlapping its content), and is a separate module/service entirely —
+    // this is just a launcher button, so it can be ripped out independently
+    // without touching notes state if something breaks.
+    Rectangle {
+        id: alarmBtn
+        anchors {
+            left: bgCard.right
+            top: bgCard.top
+            leftMargin: 8
+        }
+        width: 24
+        height: 24
+        radius: Theme.radiusSmall
+        color: alarmMa.containsMouse ? Theme.surfaceHi : Qt.alpha(Theme.bg, 0.85)
+        border.color: Theme.border
+        border.width: 1
+        opacity: panel.wantOpen ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+        Behavior on color { ColorAnimation { duration: Theme.animFast } }
+
+        Text {
+            anchors.centerIn: parent
+            // Font Awesome 7 Solid:  clock
+            text: ""
+            color: alarmMa.containsMouse ? Theme.text : Theme.textDim
+            font.family: Theme.fontIcon
+            font.styleName: "Solid"
+            font.pixelSize: 12
+            renderType: Text.NativeRendering
+            Behavior on color { ColorAnimation { duration: Theme.animFast } }
+        }
+
+        MouseArea {
+            id: alarmMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: AlarmService.openPopup()
+        }
+    }
+
+    // Opens the Pomodoro popup. Same rail, stacked below the alarm button.
+    Rectangle {
+        id: pomodoroBtn
+        anchors {
+            left: bgCard.right
+            top: alarmBtn.bottom
+            leftMargin: 8
+            topMargin: 8
+        }
+        width: 24
+        height: 24
+        radius: Theme.radiusSmall
+        color: pomodoroMa.containsMouse ? Theme.surfaceHi : Qt.alpha(Theme.bg, 0.85)
+        border.color: Theme.border
+        border.width: 1
+        opacity: panel.wantOpen ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+        Behavior on color { ColorAnimation { duration: Theme.animFast } }
+
+        Text {
+            anchors.centerIn: parent
+            // Font Awesome 7 Solid:  stopwatch
+            text: ""
+            color: pomodoroMa.containsMouse ? Theme.text : Theme.textDim
+            font.family: Theme.fontIcon
+            font.styleName: "Solid"
+            font.pixelSize: 12
+            renderType: Text.NativeRendering
+            Behavior on color { ColorAnimation { duration: Theme.animFast } }
+        }
+
+        MouseArea {
+            id: pomodoroMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: PomodoroService.openPopup()
         }
     }
 }

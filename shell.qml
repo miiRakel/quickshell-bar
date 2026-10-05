@@ -14,6 +14,8 @@ import qs.osd               // for Osd panel + OsdService singleton
 import qs.clipboard         // for ClipboardPopup + ClipboardService singleton
 import qs.launcher          // for Launcher + LauncherService singleton
 import qs.notes             // for NotesPopup + NotesService singleton
+import qs.alarms            // for AlarmPopup + AlarmRinging + AlarmService singleton
+import qs.pomodoro          // for PomodoroPopup + PomodoroService singleton
 import qs.lock              // for Lock + LockService singleton
 import qs.wallpaper         // for WallpaperLayer + WallpaperPickerPopup + WallpaperService
 import qs.weather           // for WeatherDetailPopup + WeatherService singleton
@@ -56,7 +58,14 @@ ShellRoot {
         // LockService.inputBlocked. Wired here because this is the one file
         // that legitimately imports both modules — qs.system already depends
         // on qs.lock, so the lock module cannot look the other way itself.
-        LockService.screensBlanked       = Qt.binding(() => IdleService.monitorsBlanked);
+        //
+        // Also true for the SleepService.sleeping window: a real suspend
+        // blanks the panel the same as an idle DPMS-off, but was previously
+        // uncovered, so the first keystrokes after a resume (often a
+        // Bluetooth keyboard's reconnect handshake dropping or duplicating
+        // characters) landed straight in the password field instead of being
+        // swallowed like a post-DPMS wake.
+        LockService.screensBlanked       = Qt.binding(() => IdleService.monitorsBlanked || SleepService.sleeping);
         SystemTheme.bootstrap();
         IdleService.bootstrap();
         SleepService.bootstrap();
@@ -225,6 +234,37 @@ ShellRoot {
         }
     }
 
+    // Alarms — opened from the clock button inside NotesPopup, or via IPC.
+    // A wholly separate module/service from notes; only the launcher
+    // button lives inside NotesPopup.
+    Variants {
+        model: Quickshell.screens
+
+        AlarmPopup {
+            focusedOutput: Compositor.focusedOutput
+        }
+    }
+
+    // The actual "it's going off" card. Separate from AlarmPopup so it can
+    // show up even while that list popup is closed.
+    Variants {
+        model: Quickshell.screens
+
+        AlarmRinging {
+            focusedOutput: Compositor.focusedOutput
+        }
+    }
+
+    // Pomodoro timer — opened from the stopwatch button inside NotesPopup,
+    // or via IPC. Same fully-separate-module pattern as alarms.
+    Variants {
+        model: Quickshell.screens
+
+        PomodoroPopup {
+            focusedOutput: Compositor.focusedOutput
+        }
+    }
+
     // Wallpaper picker — same per-monitor pattern as Launcher / Clipboard.
     // Triggered by clicking the Wallpaper bar widget (no IPC keybind, per
     // the user's preference; the widget toggles WallpaperService.popupOpen
@@ -303,6 +343,29 @@ ShellRoot {
         function open(): void   { NotesService.openPopup(); }
         function close(): void  { NotesService.closePopup(); }
         function toggle(): void { NotesService.togglePopup(); }
+    }
+
+    // IPC: `qs ipc call alarms open` toggles the alarms list popup.
+    // `dismiss` silences a currently-ringing alarm from a script/keybind.
+    IpcHandler {
+        target: "alarms"
+        function open(): void    { AlarmService.openPopup(); }
+        function close(): void   { AlarmService.closePopup(); }
+        function toggle(): void  { AlarmService.togglePopup(); }
+        function dismiss(): void { AlarmService.dismissRinging(); }
+    }
+
+    // IPC: `qs ipc call pomodoro open` toggles the pomodoro popup.
+    // `start`/`pause`/`reset`/`skip` control it directly from a keybind.
+    IpcHandler {
+        target: "pomodoro"
+        function open(): void   { PomodoroService.openPopup(); }
+        function close(): void  { PomodoroService.closePopup(); }
+        function toggle(): void { PomodoroService.togglePopup(); }
+        function start(): void  { PomodoroService.start(); }
+        function pause(): void  { PomodoroService.pause(); }
+        function reset(): void  { PomodoroService.reset(); }
+        function skip(): void   { PomodoroService.skip(); }
     }
 
     // IPC: `qs ipc call lock open` locks the session. Idempotent (calling

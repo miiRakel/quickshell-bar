@@ -25,7 +25,11 @@ Singleton {
     // ---- Popup control ----
 
     function openPopup() {
-        PopupController.open(root, () => root.popupOpen = false);
+        // sticky: true — a work-session widget, not a quick-glance popup.
+        // With input:follow_mouse on, merely hovering another window fires
+        // the same compositor signal a deliberate click would; without
+        // this the panel closed itself the moment the cursor drifted off.
+        PopupController.open(root, () => root.popupOpen = false, true);
         root.popupOpen = true;
     }
 
@@ -55,6 +59,13 @@ Singleton {
 
     function removeNote(id) {
         root.notes = root.notes.filter(n => n.id !== id);
+        _save();
+    }
+
+    function updateNote(id, text) {
+        const trimmed = (text || "").trim();
+        if (!trimmed) return;
+        root.notes = root.notes.map(n => n.id === id ? Object.assign({}, n, { text: trimmed }) : n);
         _save();
     }
 

@@ -173,6 +173,39 @@ Singleton {
         // Re-arm for the next cycle. Deliberately does NOT unlock: coming
         // back from suspend is not authentication.
         root._takeInhibitor();
+
+        // The internal SOF/soundwire ALSA device gets stuck in a permanent
+        // snd_pcm_avail EPIPE recovery loop after suspend/resume, which
+        // leaves the whole PipeWire graph broken until manually kicked.
+        // Restarting only wireplumber (owns ALSA device lifecycle) clears
+        // the wedged node by making it re-probe and reopen the PCM, without
+        // touching pipewire.service/pipewire-pulse.service -- those hold
+        // the actual client sockets, and killing them drops every app's
+        // audio connection (Chrome in particular never reconnects its
+        // shared audio service on its own afterwards).
+        //
+        // This used to live in hypridle.conf's after_sleep_cmd, but this
+        // shell's own IdleService already replaces hypridle for lock/DPMS
+        // (see its header comment), so running hypridle alongside it just
+        // to get this one hook duplicated idle handling -- two independent
+        // lock/DPMS cycles on different schedules, plus hypridle's leftover
+        // 60s dim-to-1% listener firing as spurious brightness OSDs. Doing
+        // it here keeps the fix without reviving the second idle daemon.
+        wireplumberRestart.running = false;
+        wireplumberRestart.running = true;
+    }
+
+    Process {
+        id: wireplumberRestart
+        running: false
+        command: ["systemctl", "--user", "restart", "wireplumber.service"]
+        stderr: SplitParser {
+            splitMarker: "\n"
+            onRead: line => {
+                if (line && line.length > 0)
+                    console.warn("[SleepService] wireplumber restart:", line.trim());
+            }
+        }
     }
 
     function _handleLine(line) {
